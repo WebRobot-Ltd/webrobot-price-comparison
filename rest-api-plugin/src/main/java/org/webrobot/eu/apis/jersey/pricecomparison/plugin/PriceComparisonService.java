@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.webrobot.eu.kernel.common.domain.orm.*;
 import org.webrobot.eu.kernel.common.persistence.mybatis.service.*;
+import org.webrobot.eu.kernel.common.domain.orm.ExecutionStatus;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -150,31 +151,28 @@ public class PriceComparisonService {
 
     private Project ensureProject(String orgId) {
         String name = PROJECT_NAME_PREFIX + "-org-" + orgId;
-        List<Project> existing = projectService.findByNameAndOrganizationId(name, Long.parseLong(orgId));
-        if (existing != null && !existing.isEmpty()) return existing.get(0);
+        Project existing = projectService.findByName(name);
+        if (existing != null) return existing;
 
         Project p = new Project();
         p.setName(name);
-        p.setOrganizationId(Long.parseLong(orgId));
+        p.setOrganizationId(orgId);
         p.setDescription("Price comparison monitoring — auto-created by plugin");
-        p.setCreatedAt(new Date());
-        projectService.save(p);
+        p = projectService.create(p);
         logger.info("Created price-comparison project {} for org {}", p.getId(), orgId);
         return p;
     }
 
     private Agent ensureAgent(Project project, String suffix, String pipelineYaml) {
         String agentName = PROJECT_NAME_PREFIX + suffix + "-org-" + project.getOrganizationId();
-        List<Agent> existing = agentService.findByNameAndProjectId(agentName, project.getId());
-        if (existing != null && !existing.isEmpty()) return existing.get(0);
+        Agent existing = agentService.findByName(agentName);
+        if (existing != null) return existing;
 
         Agent a = new Agent();
         a.setName(agentName);
-        a.setProjectId(project.getId());
         a.setOrganizationId(project.getOrganizationId());
         a.setPipelineYaml(pipelineYaml);
-        a.setCreatedAt(new Date());
-        agentService.save(a);
+        a = agentService.create(a);
         logger.info("Created agent {} (project {})", a.getId(), project.getId());
         return a;
     }
@@ -380,37 +378,33 @@ public class PriceComparisonService {
                                            List<String> credentialIds, String timestamp) throws Exception {
         // Resolve project + agent
         String projectName = PROJECT_NAME_PREFIX + "-org-" + orgId;
-        List<Project> projects = projectService.findByNameAndOrganizationId(
-                projectName, Long.parseLong(orgId));
-        if (projects == null || projects.isEmpty())
+        Project project = projectService.findByName(projectName);
+        if (project == null)
             throw new IllegalStateException("Setup not done — call POST /bootstrap first");
-        Project project = projects.get(0);
 
         String agentSuffix = "discovery".equals(phase) ? AGENT_DISCOVERY_SUFFIX : AGENT_MONITORING_SUFFIX;
         String agentName   = PROJECT_NAME_PREFIX + agentSuffix + "-org-" + orgId;
-        List<Agent> agents = agentService.findByNameAndProjectId(agentName, project.getId());
-        if (agents == null || agents.isEmpty())
+        Agent agent = agentService.findByName(agentName);
+        if (agent == null)
             throw new IllegalStateException("Agent not found — call POST /bootstrap first");
-        Agent agent = agents.get(0);
 
         // Create Dataset (pointing to the MinIO CSV)
         Dataset dataset = new Dataset();
         dataset.setName("pc-" + phase + "-" + orgId + "-" + timestamp);
-        dataset.setOrganizationId(Long.parseLong(orgId));
-        dataset.setFilePath(csvPath);
-        dataset.setCreatedAt(new Date());
-        datasetService.save(dataset);
+        dataset.setOrganizationId(orgId);
+        dataset.setStoragePath(csvPath);
+        dataset.setCreatedAt(new java.util.Date());
+        dataset = datasetService.create(dataset);
 
         // Create Job
         Job job = new Job();
         job.setName("pc-" + phase + "-" + orgId + "-" + timestamp);
-        job.setProjectId(project.getId());
-        job.setAgentId(agent.getId());
-        job.setDatasetId(dataset.getId());
-        job.setOrganizationId(Long.parseLong(orgId));
-        job.setStatus("pending");
-        job.setCreatedAt(new Date());
-        jobService.save(job);
+        job.setProject(project);
+        job.setAgent(agent);
+        job.setInputDataset(dataset);
+        job.setOrganizationId(orgId);
+        job.setExecutionStatus(ExecutionStatus.PENDING);
+        job = jobService.create(job);
 
         // Build SparkJobConfig and submit
         org.webrobot.eu.kernel.common.domain.SparkJobConfig sparkConfig =
@@ -418,7 +412,7 @@ public class PriceComparisonService {
         toUUID(project.getId()).ifPresent(sparkConfig::setProjectId);
         toUUID(job.getId()).ifPresent(sparkConfig::setJobId);
         sparkConfig.setJobType("Python");
-        sparkConfig.setOrganizationId(Long.parseLong(orgId));
+        sparkConfig.setOrganizationId(orgId);
 
         // Credentials
         List<UUID> credUuids = new ArrayList<>();

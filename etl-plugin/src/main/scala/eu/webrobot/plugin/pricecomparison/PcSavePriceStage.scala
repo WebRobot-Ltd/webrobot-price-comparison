@@ -39,10 +39,10 @@ class PcSavePriceStage extends WSinkStage {
     val orgId        = resolveOrgId(row, ctx)
     val ean          = row.str("ean").getOrElse("")
     val site         = row.str("competitor_site").getOrElse("")
-    val price        = row.double(priceField).orNull
+    val price        = row.double(priceField).map(java.lang.Double.valueOf).orNull
     val currency     = row.str(currencyField).orNull
     val availability = row.str(availabilityField).getOrElse("unknown")
-    val discountPct  = row.double("discount_pct").orNull
+    val discountPct  = row.double("discount_pct").map(java.lang.Double.valueOf).orNull
 
     if (price == null)
       ctx.warn(s"pc_save_price: price field '$priceField' is missing for match_id=$matchId — inserting NULL")
