@@ -8,7 +8,7 @@ This repository is intentionally structured as a reference implementation. The g
 
 ## What WebroBot provides
 
-- A distributed scraping engine (SpookyStuff + Spark) with a YAML pipeline DSL
+- A distributed scraping engine (WebRobot ETL + Spark) with a YAML pipeline DSL
 - A plugin SDK for authoring custom ETL stages in Scala
 - A REST API plugin system (Jersey/JAX-RS) for adding domain endpoints
 - Cloud credential injection, MinIO storage, PostgreSQL, and Kubernetes job orchestration — all pre-wired
