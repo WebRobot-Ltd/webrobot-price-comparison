@@ -1,0 +1,58 @@
+{
+  "pluginId": "price-comparison",
+  "version": "0.2.0",
+  "pluginType": "api",
+  "displayName": "Price Comparison",
+  "description": "Multi-site price comparison: EAN matching + periodic price tracking via scraping. Two-phase: discovery (search-based) + monitoring (URL-based). Image matching via Groq vision LLM.",
+  "mainClass": "org.webrobot.eu.apis.jersey.pricecomparison.plugin.PriceComparisonPlugin",
+  "bootstrapMethod": "bootstrap",
+  "dependencies": [],
+  "dbMigrations": {
+    "enabled": true,
+    "location": "db/migration/price_comparison"
+  },
+  "stages": [
+    {
+      "stage_name": "pc_match_scorer",
+      "description": "Tier 1+2 scoring: EAN exact match (0.95) or Jaccard title similarity (0.50-0.85). Sets match_confidence.",
+      "arg_schema": [
+        { "name": "ean_input_field",   "type": "string", "default": "ean" },
+        { "name": "ean_found_field",   "type": "string", "default": "pc_ean_code" },
+        { "name": "title_input_field", "type": "string", "default": "product_name" },
+        { "name": "title_found_field", "type": "string", "default": "pc_title" }
+      ]
+    },
+    {
+      "stage_name": "pc_image_match_stage",
+      "description": "Tier 3 scoring via Groq vision LLM. Compares ref_image_url (catalog) vs pc_image_url (scraped). Skipped if match_confidence >= min_uncertainty. Sets image_match_confidence, updates match_confidence.",
+      "arg_schema": [
+        { "name": "ref_image_field",     "type": "string", "default": "ref_image_url" },
+        { "name": "scraped_image_field", "type": "string", "default": "pc_image_url" },
+        { "name": "min_uncertainty",     "type": "double", "default": "0.90" },
+        { "name": "model",               "type": "string", "default": "" }
+      ]
+    },
+    {
+      "stage_name": "pc_save_match",
+      "description": "UPSERT into pc_matches (org_id, ean, competitor_site). Sets match_id on row.",
+      "arg_schema": [
+        { "name": "ean_field",        "type": "string", "default": "ean" },
+        { "name": "url_field",        "type": "string", "default": "product_url" },
+        { "name": "site_field",       "type": "string", "default": "competitor_site" },
+        { "name": "confidence_field", "type": "string", "default": "match_confidence" }
+      ]
+    },
+    {
+      "stage_name": "pc_save_price",
+      "description": "INSERT into pc_price_history. Requires match_id in row (set by pc_save_match).",
+      "arg_schema": [
+        { "name": "match_id_field",     "type": "string", "default": "match_id" },
+        { "name": "price_field",        "type": "string", "default": "pc_price" },
+        { "name": "currency_field",     "type": "string", "default": "pc_currency" },
+        { "name": "availability_field", "type": "string", "default": "pc_availability" }
+      ]
+    }
+  ],
+  "organizationIds": [],
+  "enabled": true
+}
