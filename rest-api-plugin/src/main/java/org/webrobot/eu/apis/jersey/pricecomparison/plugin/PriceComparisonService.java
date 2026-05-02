@@ -182,10 +182,10 @@ public class PriceComparisonService {
     // ── Product catalog ───────────────────────────────────────────────────────
 
     public List<Map<String, Object>> listProducts(String orgId) throws Exception {
-        try (Connection conn = getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
                 "SELECT id, ean, product_name, brand, image_url, created_at, updated_at " +
-                "FROM pc_ean_catalog WHERE organization_id = ? ORDER BY ean");
+                "FROM pc_ean_catalog WHERE organization_id = ? ORDER BY ean")) {
             ps.setLong(1, Long.parseLong(orgId));
             return resultSetToList(ps.executeQuery());
         }
@@ -193,8 +193,8 @@ public class PriceComparisonService {
 
     public Map<String, Object> upsertProduct(String orgId, String ean, String productName,
                                               String brand, String imageUrl) throws Exception {
-        try (Connection conn = getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO pc_ean_catalog (organization_id, ean, product_name, brand, image_url, updated_at) " +
                 "VALUES (?, ?, ?, ?, ?, NOW()) " +
                 "ON CONFLICT (organization_id, ean) DO UPDATE " +
@@ -202,7 +202,7 @@ public class PriceComparisonService {
                 "      brand        = EXCLUDED.brand, " +
                 "      image_url    = COALESCE(EXCLUDED.image_url, pc_ean_catalog.image_url), " +
                 "      updated_at   = NOW() " +
-                "RETURNING id, ean, product_name, brand, image_url");
+                "RETURNING id, ean, product_name, brand, image_url")) {
             ps.setLong(1, Long.parseLong(orgId));
             ps.setString(2, ean);
             ps.setString(3, productName);
@@ -214,9 +214,9 @@ public class PriceComparisonService {
     }
 
     public int deleteProduct(String orgId, String ean) throws Exception {
-        try (Connection conn = getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(
-                "DELETE FROM pc_ean_catalog WHERE organization_id = ? AND ean = ?");
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "DELETE FROM pc_ean_catalog WHERE organization_id = ? AND ean = ?")) {
             ps.setLong(1, Long.parseLong(orgId));
             ps.setString(2, ean);
             return ps.executeUpdate();
@@ -226,10 +226,11 @@ public class PriceComparisonService {
     // ── Competitors ───────────────────────────────────────────────────────────
 
     public List<Map<String, Object>> listCompetitors(String orgId) throws Exception {
-        try (Connection conn = getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(
-                "SELECT id, site_domain, site_name, country_code, is_active, created_at " +
-                "FROM pc_competitors WHERE organization_id = ? ORDER BY site_domain");
+        // Only return active competitors — soft-deleted ones are excluded
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "SELECT id, site_domain, site_name, country_code, created_at " +
+                "FROM pc_competitors WHERE organization_id = ? AND is_active = TRUE ORDER BY site_domain")) {
             ps.setLong(1, Long.parseLong(orgId));
             return resultSetToList(ps.executeQuery());
         }
@@ -237,15 +238,15 @@ public class PriceComparisonService {
 
     public Map<String, Object> upsertCompetitor(String orgId, String domain,
                                                   String siteName, String countryCode) throws Exception {
-        try (Connection conn = getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
                 "INSERT INTO pc_competitors (organization_id, site_domain, site_name, country_code) " +
                 "VALUES (?, ?, ?, ?) " +
                 "ON CONFLICT (organization_id, site_domain) DO UPDATE " +
                 "  SET site_name    = EXCLUDED.site_name, " +
                 "      country_code = EXCLUDED.country_code, " +
                 "      is_active    = TRUE " +
-                "RETURNING id, site_domain, site_name, country_code, is_active");
+                "RETURNING id, site_domain, site_name, country_code, is_active")) {
             ps.setLong(1, Long.parseLong(orgId));
             ps.setString(2, domain);
             ps.setString(3, siteName);
@@ -256,10 +257,10 @@ public class PriceComparisonService {
     }
 
     public int deleteCompetitor(String orgId, long id) throws Exception {
-        try (Connection conn = getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
                 "UPDATE pc_competitors SET is_active = FALSE " +
-                "WHERE organization_id = ? AND id = ?");
+                "WHERE organization_id = ? AND id = ?")) {
             ps.setLong(1, Long.parseLong(orgId));
             ps.setLong(2, id);
             return ps.executeUpdate();
@@ -311,7 +312,8 @@ public class PriceComparisonService {
 
         StringBuilder csv = new StringBuilder("match_id,ean,competitor_site,product_url,org_id\n");
         for (Map<String, Object> m : matches) {
-            csv.append(str(m, "id")).append(",")
+            // getMatches aliases id AS match_id — use that key for clarity
+            csv.append(str(m, "match_id")).append(",")
                .append(csvQuote(str(m, "ean"))).append(",")
                .append(csvQuote(str(m, "competitor_site"))).append(",")
                .append(csvQuote(str(m, "product_url"))).append(",")
@@ -344,8 +346,8 @@ public class PriceComparisonService {
         sql.append(" ORDER BY ean, price ASC LIMIT ?");
         params.add(limit);
 
-        try (Connection conn = getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(sql.toString());
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
             for (int i = 0; i < params.size(); i++) ps.setObject(i + 1, params.get(i));
             return resultSetToList(ps.executeQuery());
         }
@@ -353,8 +355,9 @@ public class PriceComparisonService {
 
     public List<Map<String, Object>> getMatches(String orgId, String ean, String site) throws Exception {
         StringBuilder sql = new StringBuilder(
-            "SELECT id, ean, competitor_site, product_url, product_title, " +
-            "match_confidence, match_method, is_active, last_verified_at " +
+            // Alias id AS match_id so callers use a stable, intention-revealing key
+            "SELECT id AS match_id, ean, competitor_site, product_url, product_title, " +
+            "match_confidence, match_method, last_verified_at " +
             "FROM pc_matches WHERE organization_id = ? AND is_active = TRUE");
         List<Object> params = new ArrayList<>();
         params.add(Long.parseLong(orgId));
@@ -363,8 +366,8 @@ public class PriceComparisonService {
         if (site != null && !site.isBlank()) { sql.append(" AND competitor_site = ?"); params.add(site); }
         sql.append(" ORDER BY ean, competitor_site");
 
-        try (Connection conn = getConnection()) {
-            PreparedStatement ps = conn.prepareStatement(sql.toString());
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
             for (int i = 0; i < params.size(); i++) ps.setObject(i + 1, params.get(i));
             return resultSetToList(ps.executeQuery());
         }
@@ -412,8 +415,8 @@ public class PriceComparisonService {
         // Build SparkJobConfig and submit
         org.webrobot.eu.kernel.common.domain.SparkJobConfig sparkConfig =
             new org.webrobot.eu.kernel.common.domain.SparkJobConfig();
-        sparkConfig.setProjectId(UUID.fromString(project.getId().toString()));
-        sparkConfig.setJobId(UUID.fromString(job.getId().toString()));
+        toUUID(project.getId()).ifPresent(sparkConfig::setProjectId);
+        toUUID(job.getId()).ifPresent(sparkConfig::setJobId);
         sparkConfig.setJobType("Python");
         sparkConfig.setOrganizationId(Long.parseLong(orgId));
 
@@ -486,20 +489,40 @@ public class PriceComparisonService {
         logger.info("Uploaded CSV ({} bytes) to {}", data.length, s3aPath);
     }
 
+    /**
+     * Delegates to EanImageSourcingService via a shared interface if available,
+     * otherwise falls back to a direct DB query on etl_library_versions.
+     * Returns null (job proceeds without JAR dep) if resolution fails — the
+     * operator must ensure the ETL JAR is available on the cluster classpath.
+     */
     private String findLatestJarFromDatabase(String buildType) {
+        // Prefer the shared utility exposed via the kernel if available
         try {
-            // Mirror the pattern used by EanImageSourcingService
             Class<?> utilClass = Class.forName(
-                "org.webrobot.eu.apis.jersey.ean.plugin.EanImageSourcingService");
-            java.lang.reflect.Method m = utilClass.getDeclaredMethod(
-                "findLatestJarFromDatabaseAndGeneratePresignedUrl", String.class);
-            m.setAccessible(true);
-            Object instance = utilClass.getDeclaredConstructor().newInstance();
-            return (String) m.invoke(instance, buildType);
+                "org.webrobot.eu.apis.jersey.jersey.api.EtlLibraryResolver");
+            java.lang.reflect.Method m = utilClass.getMethod(
+                "findLatestJarPresignedUrl", String.class);
+            return (String) m.invoke(null, buildType);
+        } catch (ClassNotFoundException ignored) {
+            // Shared utility not present — fall through to direct DB query
         } catch (Exception e) {
-            logger.warn("Could not resolve ETL JAR from DB: {}", e.getMessage());
-            return null;
+            logger.warn("EtlLibraryResolver call failed: {}", e.getMessage());
         }
+
+        // Direct DB fallback: same table queried by EanImageSourcingService
+        try (Connection conn = getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "SELECT presigned_url FROM etl_library_versions " +
+                "WHERE build_type = ? AND is_active = TRUE " +
+                "ORDER BY created_at DESC LIMIT 1")) {
+            ps.setString(1, buildType);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return rs.getString("presigned_url");
+            }
+        } catch (Exception e) {
+            logger.warn("Could not resolve ETL JAR from DB (build_type={}): {}", buildType, e.getMessage());
+        }
+        return null;
     }
 
     // ── Utilities ─────────────────────────────────────────────────────────────
@@ -514,7 +537,18 @@ public class PriceComparisonService {
         Properties props = new Properties();
         props.setProperty("user", user);
         props.setProperty("password", password);
+        props.setProperty("loginTimeout", "5");  // avoid hanging forever on network partition
         return DriverManager.getConnection(jdbcUrl, props);
+    }
+
+    private Optional<UUID> toUUID(Object id) {
+        if (id == null) return Optional.empty();
+        try {
+            return Optional.of(UUID.fromString(id.toString()));
+        } catch (IllegalArgumentException e) {
+            logger.warn("Cannot convert id '{}' to UUID — SparkJobConfig projectId/jobId will not be set", id);
+            return Optional.empty();
+        }
     }
 
     private List<Map<String, Object>> resultSetToList(ResultSet rs) throws SQLException {
@@ -537,8 +571,8 @@ public class PriceComparisonService {
 
     private String csvQuote(String v) {
         if (v == null) return "";
-        if (v.contains(",") || v.contains("\"") || v.contains("\n"))
-            return "\"" + v.replace("\"", "\"\"") + "\"";
+        if (v.contains(",") || v.contains("\"") || v.contains("\n") || v.contains("\r"))
+            return "\"" + v.replace("\"", "\"\"").replace("\r", "").replace("\n", " ") + "\"";
         return v;
     }
 }

@@ -4,17 +4,16 @@ import eu.webrobot.plugin.sdk.{WArgs, WRow, WSinkStage, WebroStageContext}
 
 /**
  * Inserts a scraped price observation into pc_price_history.
- * The row passes through unchanged (rows are appended, not mutated by price history).
+ * Row passes through unchanged.
  *
- * Arg positions (all optional, with defaults):
- *   0 - match_id_field     (default: "match_id")        field holding the pc_matches FK
- *   1 - price_field        (default: "pc_price")        scraped price (numeric)
- *   2 - currency_field     (default: "pc_currency")     ISO 4217 currency code
- *   3 - availability_field (default: "pc_availability") in_stock | out_of_stock | unknown
+ * Arg positions (all optional):
+ *   0 - match_id_field     (default: "match_id")
+ *   1 - price_field        (default: "pc_price")
+ *   2 - currency_field     (default: "pc_currency")
+ *   3 - availability_field (default: "pc_availability")
  *
- * Also reads "org_id"/"organization_id", "ean", "competitor_site" from the row.
- * Reads "discount_pct" from the row if present.
- * Sets "scrape_status" to "ok" on success, "error" on exception (re-throws after recording).
+ * Requires match_id > 0 in the row — set by pc_save_match.
+ * Also reads org_id, ean, competitor_site, discount_pct from the row if present.
  */
 class PcSavePriceStage extends WSinkStage {
 
@@ -32,8 +31,11 @@ class PcSavePriceStage extends WSinkStage {
     val currencyField     = args.string(2, "pc_currency")
     val availabilityField = args.string(3, "pc_availability")
 
-    val matchId      = row.get(matchIdField).map(_.toString.toLong)
-      .getOrElse(throw new IllegalStateException(s"Field '$matchIdField' missing — run pc_save_match before pc_save_price"))
+    val matchId = resolveMatchId(row, matchIdField)
+    if (matchId <= 0)
+      throw new IllegalStateException(
+        s"match_id must be > 0 — ensure pc_save_match ran successfully before pc_save_price (got $matchId)")
+
     val orgId        = resolveOrgId(row, ctx)
     val ean          = row.str("ean").getOrElse("")
     val site         = row.str("competitor_site").getOrElse("")
@@ -42,19 +44,34 @@ class PcSavePriceStage extends WSinkStage {
     val availability = row.str(availabilityField).getOrElse("unknown")
     val discountPct  = row.double("discount_pct").orNull
 
+    if (price == null)
+      ctx.warn(s"pc_save_price: price field '$priceField' is missing for match_id=$matchId — inserting NULL")
+
     val params = Seq[Any](matchId, orgId, ean, site, price, currency, availability, discountPct)
-    ctx.execute(insertSql, params)
+    val rowsAffected = ctx.execute(insertSql, params)
+    if (rowsAffected != 1)
+      ctx.warn(s"pc_save_price: expected 1 row inserted for match_id=$matchId, got $rowsAffected")
 
     row
   }
+
+  private def resolveMatchId(row: WRow, field: String): Long =
+    row.get(field) match {
+      case Some(v) if v != null && v.toString.nonEmpty =>
+        scala.util.Try(v.toString.toLong).getOrElse(
+          throw new IllegalStateException(s"Field '$field' is not a valid Long: '${v.toString}'"))
+      case _ =>
+        throw new IllegalStateException(
+          s"Field '$field' is missing or empty — run pc_save_match before pc_save_price")
+    }
 
   private def resolveOrgId(row: WRow, ctx: WebroStageContext): Long =
     row.get("org_id").orElse(row.get("organization_id"))
       .map(_.toString.toLong)
       .orElse {
-        val cfgVal = ctx.config("webrobot.org.id")
-        if (cfgVal.nonEmpty) Some(cfgVal.toLong) else None
+        val v = ctx.config("webrobot.org.id")
+        if (v.nonEmpty) Some(v.toLong) else None
       }
       .getOrElse(throw new IllegalStateException(
-        "organization_id not found in row fields ('org_id'/'organization_id') or config 'webrobot.org.id'"))
+        "organization_id not found in row ('org_id'/'organization_id') or config 'webrobot.org.id'"))
 }

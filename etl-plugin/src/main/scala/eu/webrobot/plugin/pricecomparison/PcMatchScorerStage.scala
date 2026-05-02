@@ -3,21 +3,20 @@ package eu.webrobot.plugin.pricecomparison
 import eu.webrobot.plugin.sdk.{WArgs, WRow, WTransformStage}
 
 /**
- * Scores confidence that a scraped product matches the input EAN catalog entry.
+ * Tier 1+2 match scoring.
  *
- * Arg positions (all optional, with defaults):
- *   0 - ean_input_field   (default: "ean")        field holding the reference EAN
- *   1 - ean_found_field   (default: "pc_ean_code") field holding the EAN scraped from the page
- *   2 - title_input_field (default: "product_name") reference product title
- *   3 - title_found_field (default: "pc_title")    title scraped from the page
- *   4 - strategy          (default: "tiered")      only "tiered" is currently implemented
+ * Arg positions (all optional):
+ *   0 - ean_input_field   (default: "ean")
+ *   1 - ean_found_field   (default: "pc_ean_code")
+ *   2 - title_input_field (default: "product_name")
+ *   3 - title_found_field (default: "pc_title")
  *
- * Output: sets "match_confidence" (Double in [0.0, 1.0]) on the row.
+ * Confidence values:
+ *   0.95        — EAN exact match (digits only, case-insensitive)
+ *   0.50–0.85   — Jaccard title similarity > 0 (mapped linearly)
+ *   0.0         — no evidence (zero similarity or missing fields)
  *
- * Tiered logic:
- *   1. Exact EAN match (normalized, digits only) → 0.95
- *   2. Title Jaccard similarity → mapped to [0.50, 0.85]
- *   3. No evidence → 0.0
+ * Sets "match_confidence" (Double) on the row.
  */
 class PcMatchScorerStage extends WTransformStage {
 
@@ -29,16 +28,14 @@ class PcMatchScorerStage extends WTransformStage {
     val titleInputField = args.string(2, "product_name")
     val titleFoundField = args.string(3, "pc_title")
 
-    val confidence = scoreConfidence(row, eanInputField, eanFoundField, titleInputField, titleFoundField)
+    val confidence = score(row, eanInputField, eanFoundField, titleInputField, titleFoundField)
     row.set("match_confidence", confidence)
   }
 
-  private def scoreConfidence(
+  private def score(
       row: WRow,
-      eanInputField: String,
-      eanFoundField: String,
-      titleInputField: String,
-      titleFoundField: String
+      eanInputField: String, eanFoundField: String,
+      titleInputField: String, titleFoundField: String
   ): Double = {
     val eanInput = row.str(eanInputField).map(normalizeEan).getOrElse("")
     val eanFound = row.str(eanFoundField).map(normalizeEan).getOrElse("")
@@ -51,8 +48,9 @@ class PcMatchScorerStage extends WTransformStage {
 
     if (titleInput.nonEmpty && titleFound.nonEmpty) {
       val sim = jaccardSimilarity(titleInput, titleFound)
-      // map [0.0, 1.0] → [0.50, 0.85]
-      return 0.50 + sim * 0.35
+      // Only claim a title-based match if there is actual token overlap.
+      // sim == 0.0 means completely unrelated titles — return 0.0, not 0.50.
+      if (sim > 0.0) return 0.50 + sim * 0.35
     }
 
     0.0
@@ -61,15 +59,14 @@ class PcMatchScorerStage extends WTransformStage {
   private def normalizeEan(s: String): String =
     s.trim.replaceAll("[^0-9]", "")
 
-  private def tokenize(s: String): Seq[String] =
-    s.toLowerCase.split("[^a-z0-9]+").filter(_.length >= 2).toSeq
+  private def tokenize(s: String): Set[String] =
+    s.toLowerCase.split("[^a-z0-9]+").filter(_.length >= 2).toSet
 
   private def jaccardSimilarity(a: String, b: String): Double = {
-    val tokA = tokenize(a).toSet
-    val tokB = tokenize(b).toSet
-    if (tokA.isEmpty && tokB.isEmpty) return 0.0
-    val intersection = tokA.intersect(tokB).size.toDouble
-    val union        = tokA.union(tokB).size.toDouble
-    if (union == 0.0) 0.0 else intersection / union
+    val tokA = tokenize(a)
+    val tokB = tokenize(b)
+    val union = tokA.union(tokB).size.toDouble
+    if (union == 0.0) return 0.0
+    tokA.intersect(tokB).size.toDouble / union
   }
 }

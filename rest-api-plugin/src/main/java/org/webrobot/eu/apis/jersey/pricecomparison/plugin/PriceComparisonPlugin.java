@@ -6,6 +6,7 @@ import org.webrobot.eu.apis.jersey.jetty.RequiresScopes;
 import org.webrobot.eu.apis.jersey.jersey.api.services.OrganizationContextHelper;
 
 import javax.annotation.PostConstruct;
+import javax.inject.Singleton;
 import javax.ws.rs.*;
 import javax.ws.rs.container.ContainerRequestContext;
 import javax.ws.rs.core.Context;
@@ -29,6 +30,7 @@ import java.util.*;
  *   GET    /prices                         — current prices (optionally filtered by ?ean=)
  *   GET    /matches                        — confirmed matches
  */
+@Singleton
 @Path("/webrobot/api/price-comparison")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
@@ -278,11 +280,15 @@ public class PriceComparisonPlugin {
         return v.toString().trim();
     }
 
-    @SuppressWarnings("unchecked")
     private List<String> extractCredentialIds(Map<String, Object> body) {
         if (body == null) return Collections.emptyList();
         Object raw = body.get("cloudCredentialIds");
-        if (raw instanceof List) return (List<String>) raw;
+        if (raw instanceof List) {
+            return ((List<?>) raw).stream()
+                .filter(java.util.Objects::nonNull)
+                .map(Object::toString)
+                .collect(java.util.stream.Collectors.toList());
+        }
         return Collections.emptyList();
     }
 }
