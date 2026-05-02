@@ -96,14 +96,21 @@ public class PriceComparisonService {
 
     /**
      * Phase 2: re-visit saved match URLs to collect updated prices.
+     *
+     * pc_load_matches reads active matches directly from the DB inside the Spark job
+     * (org resolved from webrobot.org.id config). The trigger CSV is a single-row
+     * seed that starts the pipeline — it carries no URL data.
      */
     private static final String MONITORING_PIPELINE_YAML =
         "pipeline:\n" +
-        "  # Load active matches (match_id, ean, competitor_site, product_url, org_id)\n" +
+        "  # Single-row trigger CSV — seeds the pipeline; pc_load_matches replaces it\n" +
         "  - stage: load_csv\n" +
         "    args:\n" +
         "      - path: \"${INPUT_CSV_PATH}\"\n" +
         "        header: \"true\"\n" +
+        "  # Load all active matches from pc_matches (reads org_id from job config)\n" +
+        "  - stage: pc_load_matches\n" +
+        "    args: []\n" +
         "  # Re-visit stored product URL\n" +
         "  - stage: visit\n" +
         "    args:\n" +
@@ -303,26 +310,14 @@ public class PriceComparisonService {
     // ── Monitoring job ────────────────────────────────────────────────────────
 
     public Map<String, Object> runMonitoringJob(String orgId, List<String> credentialIds) throws Exception {
-        List<Map<String, Object>> matches = getMatches(orgId, null, null);
-
-        if (matches.isEmpty())
-            throw new IllegalStateException("No active matches for org " + orgId + " — run discovery first");
-
-        StringBuilder csv = new StringBuilder("match_id,ean,competitor_site,product_url,org_id\n");
-        for (Map<String, Object> m : matches) {
-            // getMatches aliases id AS match_id — use that key for clarity
-            csv.append(str(m, "match_id")).append(",")
-               .append(csvQuote(str(m, "ean"))).append(",")
-               .append(csvQuote(str(m, "competitor_site"))).append(",")
-               .append(csvQuote(str(m, "product_url"))).append(",")
-               .append(orgId).append("\n");
-        }
-
+        // pc_load_matches reads URLs from pc_matches inside the Spark job —
+        // no need to query and serialize all matches here. Just upload a single-row
+        // trigger CSV to seed the pipeline; the stage resolves org_id from job config.
         String timestamp  = String.valueOf(System.currentTimeMillis());
         String csvPath    = "s3a://sparklogs-data/pc-monitor/org-" + orgId + "/monitoring-" + timestamp + "/input.csv";
         String outputPath = "s3a://sparklogs-data/pc-monitor/org-" + orgId + "/monitoring-" + timestamp + "/output";
 
-        uploadCsvToMinIO(csvPath, csv.toString());
+        uploadCsvToMinIO(csvPath, "org_id\n" + orgId + "\n");
 
         return submitJob(orgId, "monitoring", csvPath, outputPath,
                          MONITORING_PIPELINE_YAML, credentialIds, timestamp);

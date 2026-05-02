@@ -13,6 +13,13 @@
   },
   "stages": [
     {
+      "stage_name": "pc_load_matches",
+      "description": "Source stage for the monitoring pipeline. Queries pc_matches directly from the DB (org resolved from job config) and produces one row per active match. Replaces the need to read URLs into memory on the REST API side.",
+      "arg_schema": [
+        { "name": "min_confidence", "type": "double", "default": "0.0" }
+      ]
+    },
+    {
       "stage_name": "pc_match_scorer",
       "description": "Tier 1+2 scoring: EAN exact match (0.95) or Jaccard title similarity (0.50-0.85). Sets match_confidence.",
       "arg_schema": [
